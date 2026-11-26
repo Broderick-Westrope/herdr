@@ -1467,6 +1467,9 @@ impl TerminalState {
         session_start_source: Option<String>,
     ) -> Option<TerminalStateMutation> {
         let session_ref = session_ref?;
+        if self.self_reported_agent_active() {
+            return None;
+        }
         let known_agent = crate::detect::parse_agent_label(&agent_label);
         let process_present = known_agent.is_some()
             && self.detected_agent == known_agent
@@ -4460,6 +4463,44 @@ mod tests {
                 .map(|hook| hook.source.as_str()),
             Some("custom:pi")
         );
+    }
+
+    #[test]
+    fn nested_agent_session_start_does_not_strand_custom_authority() {
+        for detected in [None, Some(Agent::Claude)] {
+            let mut terminal = test_terminal();
+            terminal.set_detected_state(detected, AgentState::Unknown);
+            terminal.set_hook_authority_with_session_ref(
+                "custom:anvil".into(),
+                "anvil".into(),
+                AgentState::Working,
+                None,
+                None,
+                Some(100),
+            );
+
+            let nested = terminal.set_agent_session_ref_for_session_start(
+                "herdr:claude".into(),
+                "claude".into(),
+                crate::agent_resume::AgentSessionRef::id("nested-claude"),
+                Some(200),
+                Some("startup".into()),
+            );
+            terminal.set_detected_state(None, AgentState::Unknown);
+            let idle = terminal.set_hook_authority_with_session_ref(
+                "custom:anvil".into(),
+                "anvil".into(),
+                AgentState::Idle,
+                None,
+                None,
+                Some(300),
+            );
+
+            assert!(nested.is_none(), "detected {detected:?}");
+            assert!(terminal.persisted_agent_session.is_none());
+            assert!(idle.is_some(), "detected {detected:?}");
+            assert_eq!(terminal.state, AgentState::Idle);
+        }
     }
 
     #[test]
